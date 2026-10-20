@@ -6,6 +6,12 @@ import { remoteSpawner } from "../src/execution/spawner"
 import { requireResidency } from "../src/contracts"
 import { authenticatedTransport } from "../src/execution/protocol"
 import { Environment } from "@opencode/core/environment/index"
+import { OpenCode } from "@opencode/client"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { createHost } from "../src/host"
+import { executionLayers } from "../src/execution/layers"
 
 test("the real broker streams stdin/stdout/stderr and returns a process exit", async () => {
   const broker = createBroker("test-only", "/tmp")
@@ -49,6 +55,49 @@ test("the real broker streams stdin/stdout/stderr and returns a process exit", a
 test("execution residency must be qualified before accepting U.S.-only data", () => {
   expect(() => requireResidency("us", { state: "us", artifacts: "us", execution: "unverified" })).toThrow("placement")
   expect(() => requireResidency("us", { state: "us", artifacts: "us", execution: "us" })).not.toThrow()
+})
+
+test("native shell execution does not forward the control plane environment", async () => {
+  // The isolated test runner sets this on the control plane before importing core.
+  expect(process.env.OPENCODE_CONFIG_CONTENT).toBeDefined()
+  const directory = await mkdtemp(path.join(tmpdir(), "cluster-shell-"))
+  const broker = createBroker("test-only", directory)
+  const host = await createHost(
+    {
+      models: { fetch: false },
+      config: { project: false, claude: false },
+      fs: { filewatcher: false, fff: false },
+    },
+    executionLayers((request) => {
+      const headers = new Headers(request.headers)
+      headers.set("authorization", "Bearer test-only")
+      return broker.fetch(new Request(request, { headers }))
+    }),
+  )
+  const client = OpenCode.make({
+    baseUrl: "http://cluster",
+    fetch: Object.assign((input: RequestInfo | URL, init?: RequestInit) => host.fetch(new Request(input, init)), {
+      preconnect: fetch.preconnect,
+    }),
+  })
+  try {
+    const location = { directory }
+    const shell = await client.shell.create({
+      location,
+      command: 'test -z "${OPENCODE_CONFIG_CONTENT+x}" && printf isolated',
+    })
+    const deadline = Date.now() + 10_000
+    while ((await client.shell.get({ location, id: shell.data.id })).data.status === "running") {
+      if (Date.now() > deadline) throw new Error("Remote shell did not exit")
+      await Bun.sleep(10)
+    }
+    expect((await client.shell.get({ location, id: shell.data.id })).data.exit).toBe(0)
+    expect((await client.shell.output({ location, id: shell.data.id })).data.output).toBe("isolated")
+  } finally {
+    await host.close()
+    broker.close()
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 const linux = process.env.CLUSTER_TEST_EXECUTOR_URL ? test : test.skip

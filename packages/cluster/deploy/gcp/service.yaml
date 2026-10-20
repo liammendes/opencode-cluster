@@ -1,20 +1,26 @@
-# Replace PROJECT, IMAGE, SERVICE_ACCOUNT and secret names before deployment.
+# Replace REGION, IMAGE, SERVICE_ACCOUNT, EXECUTION_SERVICE and secret versions.
+# For Cloud SQL, add its instance annotation and CLUSTER_DATABASE_SOCKET.
+# PlanetScale Postgres and other TLS endpoints need neither setting.
 # API replicas share PostgreSQL; they do not own agent execution.
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: opencode-cluster-api
+  annotations:
+    run.googleapis.com/ingress: internal-and-cloud-load-balancing
+    run.googleapis.com/default-url-disabled: "true"
   labels:
-    cloud.googleapis.com/location: us-east4
+    cloud.googleapis.com/location: REGION
 spec:
   template:
     metadata:
       annotations:
-        autoscaling.knative.dev/maxScale: "10"
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "3"
         run.googleapis.com/execution-environment: gen2
     spec:
       serviceAccountName: SERVICE_ACCOUNT
-      containerConcurrency: 80
+      containerConcurrency: 40
       timeoutSeconds: 3600
       containers:
         - image: IMAGE
@@ -23,13 +29,18 @@ spec:
             limits: { cpu: "1", memory: 2Gi }
           env:
             - { name: CLUSTER_ROLE, value: api }
+            - { name: CLUSTER_NAMESPACE, value: default }
+            - { name: CLUSTER_DATABASE_CONNECTIONS, value: "4" }
             - name: CLUSTER_DATABASE_URL
               valueFrom:
-                secretKeyRef: { name: opencode-database-url, key: latest }
+                secretKeyRef: { name: opencode-database-url, key: "1" }
             - name: CLUSTER_PASSWORD
               valueFrom:
-                secretKeyRef: { name: opencode-password, key: latest }
+                secretKeyRef: { name: opencode-password, key: "1" }
             - name: EXECUTION_TOKEN
               valueFrom:
-                secretKeyRef: { name: opencode-execution-token, key: latest }
+                secretKeyRef: { name: opencode-execution-token, key: "1" }
+            - name: OPENCODE_CONFIG_CONTENT
+              valueFrom:
+                secretKeyRef: { name: opencode-config, key: "1" }
             - { name: EXECUTION_URL, value: "https://EXECUTION_SERVICE" }

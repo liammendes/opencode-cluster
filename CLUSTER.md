@@ -11,8 +11,9 @@ shared state and a small upstream patch over throughput.
 
 - Multiple native HTTP API replicas read and write the same authoritative state.
   Clients use the existing OpenCode session API and client library.
-- A separate worker executes multiple sessions within one process. An acknowledged
-  prompt remains in durable storage if its API replica stops.
+- Native workers execute multiple sessions within each process. Root-session
+  assignments keep a session family on one worker. An acknowledged prompt remains
+  in durable storage if its API replica stops.
 - Renewable PostgreSQL leases with monotonically increasing epochs reject writes
   from an expired worker. The database clock determines expiry.
 - A durable event outbox relays committed events to other replicas, including
@@ -42,12 +43,12 @@ flowchart LR
 
 ## Deployment profiles
 
-| Profile              | State and coordination                 | Tool execution                                     | Verification                                                                                                                                   |
-| -------------------- | -------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Docker / self-hosted | PostgreSQL + SQLite checkpoint adapter | Separate Linux container and volume                | Real PostgreSQL, process transport, binary files and Git tested locally                                                                        |
-| Google Cloud Run     | Same native API image + PostgreSQL     | Separately supervised worker and isolated executor | API manifest supplied; no live GCP deployment                                                                                                  |
-| Cloudflare Workers   | Durable Object SQLite + alarms         | Cloudflare Container, or `EXECUTION_URL`           | Local workerd session API, restart, archive round trip and agent execution with a synthetic HTTP model tested; managed containers not deployed |
-| Celld                | Potential workerd-compatible adapter   | Celld-managed containers                           | Not qualified or integrated                                                                                                                    |
+| Profile              | State and coordination                    | Tool execution                                           | Verification                                                                                                                                   |
+| -------------------- | ----------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Docker / self-hosted | PostgreSQL + SQLite checkpoint adapter    | Separate Linux container and volume                      | Real PostgreSQL, process transport, binary files and Git tested locally                                                                        |
+| Google Cloud Run     | Native API and worker images + PostgreSQL | Separate Linux executor and optional capacity controller | Small deployment; see the guide for setup and capacity limits                                                                                  |
+| Cloudflare Workers   | Durable Object SQLite + alarms            | Cloudflare Container, or `EXECUTION_URL`                 | Local workerd session API, restart, archive round trip and agent execution with a synthetic HTTP model tested; managed containers not deployed |
+| Celld                | Potential workerd-compatible adapter      | Celld-managed containers                                 | Not qualified or integrated                                                                                                                    |
 
 The provider-independent interfaces live in `packages/cluster/src/contracts.ts`.
 The common RPC does not depend on a cloud SDK. `src/objects.ts` provides R2 and
@@ -56,6 +57,11 @@ Cloudflare is optional; the native deployment does not depend on Cloudflare.
 The Cloudflare deployment does not require a Google service.
 
 ## Try the native deployment
+
+Follow the [native setup guide](packages/cluster/deploy/README.md) for prerequisites,
+secret creation, model configuration, a check across two API replicas and a
+terminal connection. The abbreviated commands below are a reference for an
+already configured checkout.
 
 Use Docker Engine, or OrbStack on macOS. From the repository root:
 
@@ -78,9 +84,10 @@ The executor has no published host port in Compose.
 Set `OPENCODE_CONFIG_CONTENT` identically on API and worker containers to configure
 models, including an OpenAI-compatible provider such as Mercury. Supply credentials
 through your deployment's secret mechanism. This fork does not change the model
-provider or bypass its quotas. Mercury and Paseo integration have not been tested.
-Paseo must connect to the shared server rather than continue spawning a new local
-OpenCode binary per agent.
+provider or bypass its quotas. The [Paseo overlay](packages/cluster/integrations/paseo/README.md)
+connects Paseo 0.12.0 to the shared server without starting an OpenCode process per
+agent. Shared MCP configuration lives in the cluster; local bridge tools and
+per-session process environment overrides are unsupported.
 
 Use `/workspace` for session locations. The persistent volume belongs to one
 trusted installation. Use separate namespaces **and separate executor volumes**
@@ -104,9 +111,17 @@ configuration and the checks still required before deploying.
   a correctness-first alpha adapter, with serialized access and growing bandwidth
   costs. It needs a row-level backend or independently coordinated shards before
   claiming high throughput for thousands of busy sessions.
-- One native execution owner serves each namespace. `CLUSTER_CONCURRENCY`
-  (default 8) limits external admission; nested native subagents can exceed it.
-  Automatic fleet scheduling and session-family sharding are not implemented.
+- Native workers acquire separate process leases and claim root-session families.
+  `CLUSTER_CONCURRENCY` defaults to four families per worker. Nested subagents stay
+  with their parent and can exceed that top-level session count. The Cloud Run
+  controller defaults to one to four workers; other hosts need a capacity adapter
+  or manual scaling. Existing sessions are not moved when a worker is added.
+- The Cloudflare profile uses one Durable Object runtime per namespace. It does
+  not share the native worker-pool controller or scale one namespace across
+  multiple execution runtimes.
+- CPU and RAM can request more native workers. Executor disk pressure pauses new
+  admissions; adding workers does not enlarge shared storage or speed up one
+  memory-heavy session. Scaling down waits for all workers to be idle.
 - Worker takeover marks uncertain, previously running sessions interrupted. It
   does not blindly replay an external tool. Fencing database writes cannot undo
   an already-sent command or guarantee exactly-once side effects.

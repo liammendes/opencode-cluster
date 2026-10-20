@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Shared state. Pooled agents. Your infrastructure.
+  Run OpenCode agents on your own infrastructure.
 </p>
 
 <p align="center">
@@ -15,9 +15,9 @@
 
 **opencode-cluster** is an experimental, vendor-neutral fork of
 [OpenCode](https://github.com/anomalyco/opencode). Multiple API replicas share
-authoritative session state, while a pooled execution worker runs several agents
-in one process. Deploy on your own infrastructure or use the Cloudflare Workers
-adapter.
+authoritative session state. Native execution workers each run several agent
+sessions in one process and coordinate ownership through PostgreSQL. You can
+also use the separate Cloudflare Workers profile.
 
 **Status: alpha.** Shared state, recovery and local execution are tested. A fleet
 of thousands of simultaneously active agents has not been demonstrated. Start
@@ -47,8 +47,8 @@ state; clients do not need to remember which replica created it.
 
 | Environment                | Start here                                                       | Verification                                                                                                    |
 | -------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Local Docker / self-hosted | [Native setup](CLUSTER.md#try-the-native-deployment)             | Separate API containers, PostgreSQL and a Linux executor tested locally                                         |
-| Google Cloud Run           | [GCP guide](packages/cluster/deploy/gcp/README.md)               | API manifest supplied; no live GCP deployment                                                                   |
+| Local Docker / self-hosted | [Native setup](packages/cluster/deploy/README.md)                | Start here. Includes secrets, model setup, shared-state checks and a terminal connection.                       |
+| Google Cloud Run           | [GCP guide](packages/cluster/deploy/gcp/README.md)               | API and worker services, PostgreSQL options, custom HTTPS and bounded autoscaling.                              |
 | Cloudflare Workers         | [Cloudflare guide](packages/cluster/deploy/cloudflare/README.md) | Local workerd API, restart, archive round trip and synthetic agent turn tested; managed containers not deployed |
 
 Cloudflare is optional. The native deployment does not depend on a Cloudflare
@@ -56,8 +56,8 @@ service, and the Cloudflare deployment does not require a Google service.
 
 ## Get started
 
-Clone this fork, then follow the [native setup](CLUSTER.md#try-the-native-deployment)
-to start PostgreSQL, two API replicas and a pooled execution worker:
+Clone this fork, then follow the [native setup](packages/cluster/deploy/README.md)
+to start PostgreSQL, two API replicas and an execution worker:
 
 ```sh
 git clone --branch cluster-v2.0.32 https://github.com/liammendes/opencode-cluster.git
@@ -66,8 +66,31 @@ cd opencode-cluster
 
 The setup guide covers credentials, model configuration and persistent workspace
 volumes. Cloud Run and Cloudflare have their own deployment guides above.
-Paseo and real Mercury workloads still need integration testing; Paseo must use
-the shared server to avoid spawning a local OpenCode process for every agent.
+A [Paseo 0.12.0 overlay](packages/cluster/integrations/paseo/README.md) connects its
+OpenCode adapter to a shared HTTPS server. See that guide for installation and
+the remote bridge limitations.
+
+Once your API is available over HTTPS and `OPENCODE_PASSWORD` is set privately,
+connect with an OpenCode v2.0.32 client:
+
+```sh
+opencode --server https://YOUR_CLUSTER_HOST --session SESSION_ID
+```
+
+Create the session with a directory that exists on the remote executor. Connecting
+does not upload your local working directory.
+
+## Scaling expectations
+
+The native pool defaults to four top-level session families per worker. Its
+Cloud Run controller can adjust worker count using queued work, CPU and RAM,
+with a default range of one to four workers. Shared disk pressure pauses new
+admissions. Child agents stay on their parent's worker and can exceed the
+top-level slot count.
+
+The Cloudflare profile uses one Durable Object runtime per namespace and has
+different scaling limits. Neither profile removes model quotas, executor limits,
+or the need to measure your workload.
 
 ## What the 1,000-session result means
 

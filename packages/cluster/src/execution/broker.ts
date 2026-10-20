@@ -1,4 +1,5 @@
 import type { Subprocess } from "bun"
+import { statfs } from "node:fs/promises"
 import type { Spawn } from "./protocol"
 
 /**
@@ -22,6 +23,16 @@ export function createBroker(token: string, root = "/workspace") {
         return new Response("Unauthorized", { status: 401 })
       const url = new URL(request.url)
       if (url.pathname === "/health") return new Response("ok")
+      if (url.pathname === "/metrics" && request.method === "GET") {
+        const disk = await statfs(root)
+        return Response.json({
+          disk: {
+            used: disk.blocks ? 1 - disk.bavail / disk.blocks : 1,
+            available: disk.bavail * disk.bsize,
+          },
+          processes: [...processes.values()].filter((item) => item.process.exitCode === null).length,
+        })
+      }
       if (url.pathname === "/process" && request.method === "POST") {
         const input = (await request.json()) as Spawn
         if (
@@ -40,7 +51,7 @@ export function createBroker(token: string, root = "/workspace") {
           if (item.completed && item.completed < Date.now() - 300_000) processes.delete(id)
         if (processes.size >= 512) return new Response("Execution capacity reached", { status: 503 })
         const inherited = { PATH: process.env.PATH, HOME: root, LANG: "C.UTF-8" }
-        const env = input.env && !input.extendEnv ? input.env : { ...inherited, ...input.env }
+        const env = input.env && input.extendEnv === false ? input.env : { ...inherited, ...input.env }
         const args = [input.command, ...input.args]
         const child = Bun.spawn(
           input.shell ? [typeof input.shell === "string" ? input.shell : "/bin/sh", "-c", args.join(" ")] : args,

@@ -95,7 +95,7 @@ export function executionLayers(transport: Transport) {
   })
   return [
     CrossSpawnSpawner.node.replace(Layer.succeed(ChildProcessSpawner, spawner)),
-    Environment.node.replace(Layer.succeed(Environment.Service, { spawner, files })),
+    Environment.node.replace(Layer.succeed(Environment.Service, { spawner, files, shellEnvironment: {} })),
     FileSystem.node.replace(filesystem),
   ] as const
 }

@@ -27,6 +27,13 @@ export interface Fence {
   readonly namespace: string
   readonly owner: string
   readonly epoch: number
+  /** Worker leases fence one process while sharing a namespace's state. */
+  readonly scope?: "worker"
+}
+
+export interface WorkerStateBackend extends StateBackend {
+  acquireWorker(namespace: string, owner: string, ttl: number): Promise<Fence | undefined>
+  alive(fence: Fence): Promise<boolean>
 }
 
 export interface ObjectStore {

@@ -1,0 +1,5 @@
+node_modules/
+.wrangler/
+.cloudflare/
+assets.generated.mjs
+style.css

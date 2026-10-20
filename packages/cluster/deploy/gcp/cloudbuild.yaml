@@ -1,0 +1,24 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - packages/cluster/deploy/Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/runtime:${_TAG}
+      - .
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - packages/cluster/deploy/executor.Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/executor:${_TAG}
+      - .
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/runtime:${_TAG}
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/executor:${_TAG}
+substitutions:
+  _REGION: us-central1
+  _REPOSITORY: opencode-cluster
+  _TAG: dev

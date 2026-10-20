@@ -10,6 +10,7 @@ import { SqlClient } from "effect/sql"
 import { PostgresState } from "../src/native/postgres"
 import { sharedSqlite } from "../src/native/sqlite"
 import { createReplica, createWorker } from "../src/native/server"
+import { createPoolWorker } from "../src/native/pool"
 import { exportArchive, importTables, verifyArchive, type PortableSql } from "../src/archive"
 
 const enabled = process.env.CLUSTER_TEST_POSTGRES === "1"
@@ -26,10 +27,150 @@ beforeAll(async () => {
 })
 afterAll(async () => {
   if (!enabled) return
-  for (const id of namespaces) await backend.sql`DELETE FROM opencode_cluster_state WHERE namespace = ${id}`
+  for (const id of namespaces) {
+    await backend.sql`DELETE FROM opencode_cluster_workers WHERE namespace = ${id}`
+    await backend.sql`DELETE FROM opencode_cluster_state WHERE namespace = ${id}`
+  }
   await backend.close()
 })
 const integration = enabled ? test : test.skip
+
+integration("pool leases coexist, exclude the legacy worker, and fence late commits", async () => {
+  const id = namespace()
+  const first = (await backend.acquireWorker(id, "one", 60_000))!
+  const second = (await backend.acquireWorker(id, "two", 60_000))!
+  expect(first.scope).toBe("worker")
+  expect(await backend.alive(second)).toBe(true)
+  expect(await backend.acquire(id, "legacy", 60_000)).toBeUndefined()
+  await expect(backend.begin(namespace(), first)).rejects.toThrow("ownership")
+  const transaction = await backend.begin(id, first)
+  await backend.sql`
+    UPDATE opencode_cluster_workers SET expires = clock_timestamp() - interval '1 second'
+    WHERE namespace = ${id} AND owner = ${first.owner}
+  `
+  await expect(transaction.commit(new Uint8Array([1]))).rejects.toThrow("ownership")
+  const successor = (await backend.acquireWorker(id, "one", 60_000))!
+  expect(successor.epoch).toBe(first.epoch + 1)
+  await backend.release(first)
+  expect(await backend.alive(successor)).toBe(true)
+  await backend.release(successor)
+  await backend.release(second)
+  const legacy = (await backend.acquire(id, "legacy", 60_000))!
+  expect(await backend.acquireWorker(id, "three", 60_000)).toBeUndefined()
+  await backend.release(legacy)
+})
+
+integration(
+  "two pool workers enforce capacity, own different sessions, and recover without replay",
+  async () => {
+    const id = namespace()
+    const options = {
+      backend,
+      namespace: id,
+      server: {
+        models: { fetch: false },
+        fs: { filewatcher: false, fff: false },
+        config: {
+          content: JSON.stringify({
+            model: "custom/fictional-chat",
+            providers: {
+              custom: {
+                package: "@opencode/ai/providers/openai-compatible",
+                settings: { baseURL: "https://provider.example/v1", apiKey: "synthetic" },
+                models: { "fictional-chat": {} },
+              },
+            },
+          }),
+        },
+      },
+    }
+    const api = await createReplica(options)
+    const client = OpenCode.make({
+      baseUrl: "http://cluster",
+      fetch: Object.assign((input: RequestInfo | URL, init?: RequestInit) => api.fetch(new Request(input, init)), {
+        preconnect: fetch.preconnect,
+      }),
+    })
+    const llms = await Promise.all(
+      [0, 1].map(() =>
+        Effect.runPromise(TestLLM.Test.pipe(Effect.provide(TestLLM.testLayer({ fallback: TestLLM.hangAfter() })))),
+      ),
+    )
+    const fences = await Promise.all(["a", "b"].map((owner) => backend.acquireWorker(id, owner, 120_000)))
+    const workers = await Promise.all(
+      fences.map((fence, index) =>
+        createPoolWorker(
+          { ...options, overrides: [llmClient.replace(Layer.succeed(LLMClient.Service, llms[index]!))] },
+          fence!,
+          2,
+        ),
+      ),
+    )
+    try {
+      for (let index = 0; index < 5; index++) {
+        const session = await client.session.create({ location: { directory: "/tmp" } })
+        await client.session.prompt({ sessionID: session.id, text: "Wait for a reply" })
+      }
+      await Promise.all(workers.map((worker) => worker.tick()))
+      await Promise.all(llms.map((llm) => Effect.runPromise(llm.wait(2))))
+      const first = await workers[0]!.active()
+      const second = await workers[1]!.active()
+      expect(first.size).toBe(2)
+      expect(second.size).toBe(2)
+      expect([...first].filter((session) => second.has(session))).toHaveLength(0)
+      const transaction = await backend.begin(id)
+      const db = Database.deserialize(transaction.checkpoint.bytes)
+      expect(db.query("SELECT count(*) AS total FROM cluster_assignments").get()).toEqual({ total: 4 })
+      expect(db.query("SELECT count(*) AS total FROM session_inbox").get()).toEqual({ total: 1 })
+      const lostNotice = SessionMessage.ID.create()
+      const liveNotice = SessionMessage.ID.create()
+      for (const [session, notificationID] of [[...first][0]!, [...second][0]!].map(
+        (session, index) => [session, index === 0 ? lostNotice : liveNotice] as const,
+      ))
+        db.run("INSERT INTO kv (key, value, time_created, time_updated) VALUES (?, ?, ?, ?)", [
+          `job.background/${notificationID}`,
+          JSON.stringify({
+            id: notificationID,
+            notificationID,
+            status: "running",
+            recovery: {
+              kind: "shell",
+              sessionID: session,
+              shellID: "test-shell",
+              command: "synthetic background command",
+            },
+          }),
+          Date.now(),
+          Date.now(),
+        ])
+      await transaction.commit(db.serialize())
+      db.close()
+      await transaction.rollback()
+      await backend.sql`
+      UPDATE opencode_cluster_workers SET expires = clock_timestamp() - interval '1 second'
+      WHERE namespace = ${id} AND owner = ${fences[0]!.owner}
+    `
+      await workers[0]!.close()
+      await workers[1]!.tick()
+      expect([...(await workers[1]!.active())].sort()).toEqual([...second].sort())
+      const recovered = await backend.begin(id)
+      const state = Database.deserialize(recovered.checkpoint.bytes)
+      expect(state.query("SELECT key FROM kv WHERE key = ?").get(`job.background/${lostNotice}`)).toBeNull()
+      expect(state.query("SELECT key FROM kv WHERE key = ?").get(`job.background/${liveNotice}`)).not.toBeNull()
+      for (const session of first)
+        expect(state.query("SELECT time_suspended FROM session_v2 WHERE id = ?").get(session)).toEqual({
+          time_suspended: null,
+        })
+      state.close()
+      await recovered.rollback()
+    } finally {
+      await Promise.all(workers.map((worker) => worker.close()))
+      await api.close()
+      await Promise.all(fences.map((fence) => backend.release(fence!)))
+    }
+  },
+  60_000,
+)
 
 integration("independent clients serialize concurrent writes and see committed state", async () => {
   const id = namespace()

@@ -45,7 +45,7 @@ services:
     environment:
       <<: *common
       CLUSTER_ROLE: worker
-      CLUSTER_CONCURRENCY: "8"
+      CLUSTER_CONCURRENCY: "4"
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped

@@ -1,0 +1,15 @@
+{
+  "name": "opencode-cluster-project-page",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@tailwindcss/cli": "4.3.3",
+    "cf": "1.0.0-beta.19",
+    "tailwindcss": "4.3.3",
+    "wrangler": "4.151.3"
+  },
+  "scripts": {
+    "build": "tailwindcss -i styles.css -o style.css --minify && node build.mjs",
+    "deploy": "npm run build && cf deploy"
+  }
+}
