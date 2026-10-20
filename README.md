@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="packages/cluster/assets/wordmark-dark.svg">
-    <img src="packages/cluster/assets/wordmark-light.svg" width="760" alt="opencode-cluster">
-  </picture>
+  <img src="packages/cluster/assets/wordmark.svg" width="760" alt="opencode-cluster">
 </p>
 
 <p align="center">

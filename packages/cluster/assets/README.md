@@ -1,14 +1,13 @@
 # opencode-cluster wordmark
 
 The name is always **opencode-cluster**, lowercase with a hyphen. Both words use
-DynaPuff Bold, with slightly tightened spacing. `cluster` uses a warm accent.
+DynaPuff Bold, with slightly tightened spacing. All lettering is black, with a
+white sticker outline and small white highlights for a glossy finish.
 
-- `wordmark-light.svg`: ink blue and burnt orange for light backgrounds.
-- `wordmark-dark.svg`: warm white and peach for dark backgrounds.
-
-Both are transparent, accessible SVGs with outlined lettering. They need no font
-download, embedded font, JavaScript or external asset at display time. Keep the
-aspect ratio and use the appropriate version for the background.
+`wordmark.svg` is the same on light and dark backgrounds. It is a transparent,
+accessible SVG with outlined lettering and vector highlights. It needs no font
+download, embedded font, JavaScript or external asset at display time. Keep its
+aspect ratio.
 
 ## Typeface credit
 
@@ -32,5 +31,5 @@ python packages/cluster/assets/generate.py /path/to/DynaPuff.ttf
 ```
 
 The generator verifies the font checksum, instantiates weight 700 and width 100,
-and writes both SVGs. It is an optional design tool, separate from the application
-build.
+and writes the SVG with its outline and highlights. It is an optional design
+tool, separate from the application build.
