@@ -1,3 +1,5 @@
+> **OpenCode Cluster (alpha):** this fork adds shared state, pooled execution, Cloudflare Workers and native/container deployment profiles. Start with [CLUSTER.md](CLUSTER.md) for setup, measured results, limitations and upstream updates. Based on OpenCode v2.0.32; not yet qualified for thousands of active agents.
+
 <p align="center">
   <a href="https://opencode.ai">
     <picture>

@@ -1,0 +1,64 @@
+name: Cluster
+on:
+  workflow_dispatch:
+  push:
+    branches: ["cluster-*"]
+    paths:
+      - "packages/cluster/**"
+      - "packages/core/**"
+      - "packages/server/**"
+      - "bun.lock"
+      - ".github/workflows/cluster.yml"
+  pull_request:
+    paths:
+      - "packages/cluster/**"
+      - "packages/core/**"
+      - "packages/server/**"
+      - "bun.lock"
+      - ".github/workflows/cluster.yml"
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: integration-only
+          POSTGRES_DB: opencode
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - name: Start isolated Linux executor
+        run: |
+          docker build -f packages/cluster/deploy/executor.Dockerfile -t cluster-executor:test .
+          docker run -d --name cluster-executor --cap-drop ALL --security-opt no-new-privileges \
+            -p 127.0.0.1:8081:8081 -e EXECUTION_TOKEN=local-test-only cluster-executor:test
+          for attempt in $(seq 1 30); do
+            if curl --fail -H 'Authorization: Bearer local-test-only' http://127.0.0.1:8081/health; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - run: bun run build:worker
+        working-directory: packages/cluster
+      - run: bun run test
+        working-directory: packages/cluster
+        env:
+          CLUSTER_TEST_POSTGRES: "1"
+          CLUSTER_DATABASE_URL: postgres://postgres:integration-only@127.0.0.1:5432/opencode
+          CLUSTER_TEST_WORKER: "1"
+          CLUSTER_TEST_EXECUTOR_URL: http://127.0.0.1:8081
+          WRANGLER_SEND_METRICS: "false"
+      - name: Stop executor
+        if: always()
+        run: docker rm -f cluster-executor || true
