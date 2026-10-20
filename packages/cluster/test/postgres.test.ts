@@ -35,6 +35,32 @@ afterAll(async () => {
 })
 const integration = enabled ? test : test.skip
 
+integration("worker renewal proceeds while the state connection pool is occupied", async () => {
+  const state = new PostgresState(url, { max: 1 })
+  const id = namespace()
+  const fence = (await state.acquireWorker(id, "busy", 60_000))!
+  const transaction = await state.begin(id, fence)
+  const renewal = state.renew(fence, 60_000)
+  const deadline = AbortSignal.timeout(5000)
+  try {
+    // This is a deadlock guard: release the held connection on failure so the
+    // test leaves no pending query or database connection behind.
+    expect(
+      await Promise.race([
+        renewal,
+        new Promise<never>((_, reject) =>
+          deadline.addEventListener("abort", () => reject(new Error("Renewal waited for a state connection"))),
+        ),
+      ]),
+    ).toBe(true)
+  } finally {
+    await transaction.rollback()
+    await renewal
+    await state.release(fence)
+    await state.close()
+  }
+})
+
 integration("pool leases coexist, exclude the legacy worker, and fence late commits", async () => {
   const id = namespace()
   const first = (await backend.acquireWorker(id, "one", 60_000))!

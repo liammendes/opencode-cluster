@@ -10,9 +10,13 @@ import { FencedError, type Fence, type WorkerStateBackend, type Transaction } fr
  */
 export class PostgresState implements WorkerStateBackend {
   readonly sql: SQL
+  private readonly heartbeat: SQL
 
   constructor(url: string, options: { max?: number; path?: string } = {}) {
     this.sql = new SQL(url, { max: 16, ...options })
+    // State transactions can occupy every connection while waiting for the
+    // namespace lock. Renewal must not queue behind that work and lose a lease.
+    this.heartbeat = new SQL(url, { ...options, max: 1 })
   }
 
   async initialize() {
@@ -134,7 +138,7 @@ export class PostgresState implements WorkerStateBackend {
 
   async renew(fence: Fence, ttl: number) {
     if (fence.scope === "worker") {
-      const rows = await this.sql`
+      const rows = await this.heartbeat`
         UPDATE opencode_cluster_workers
         SET expires = clock_timestamp() + ${ttl} * interval '1 millisecond'
         WHERE namespace = ${fence.namespace} AND owner = ${fence.owner}
@@ -143,7 +147,7 @@ export class PostgresState implements WorkerStateBackend {
       `
       return rows.length === 1
     }
-    const rows = await this.sql`
+    const rows = await this.heartbeat`
       UPDATE opencode_cluster_state
       SET expires = clock_timestamp() + ${ttl} * interval '1 millisecond'
       WHERE namespace = ${fence.namespace} AND owner = ${fence.owner}
@@ -204,6 +208,6 @@ export class PostgresState implements WorkerStateBackend {
   }
 
   async close() {
-    await this.sql.close()
+    await Promise.all([this.sql.close(), this.heartbeat.close()])
   }
 }
