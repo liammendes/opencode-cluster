@@ -21,6 +21,8 @@ const RESUME_EXHAUSTED = {
 } as const
 
 export interface Options {
+  /** Cluster recovery may only inspect a family whose previous owner has expired. */
+  readonly sessionIDs?: ReadonlySet<SessionSchema.ID>
   /**
    * Times a single turn may be resumed before it is terminalized instead.
    * The counter is durable and only a terminal event resets it, so a turn
@@ -73,6 +75,7 @@ export const layer = (options?: Options) =>
       const sessions = yield* Session.Service
       const scope = yield* Effect.scope
       const maxAttempts = options?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
+      const eligible = (id: SessionSchema.ID) => options?.sessionIDs?.has(id) ?? true
 
       const prepareResume = Effect.fnUntraced(function* (sessionID: SessionSchema.ID) {
         // Durable before the resume runs, so a crash inside the resumed turn is
@@ -192,7 +195,13 @@ export const layer = (options?: Options) =>
       return Service.of({
         resumeSuspendedSessions: Effect.gen(function* () {
           const active = yield* execution.active
-          const pending = yield* jobs.pendingBackground
+          const pending = (yield* jobs.pendingBackground).filter((background) =>
+            eligible(
+              background.recovery.kind === "shell"
+                ? background.recovery.sessionID
+                : background.recovery.parentSessionID,
+            ),
+          )
           const children = pending.flatMap((background) =>
             background.status === "running" && background.recovery.kind === "subagent"
               ? [background.recovery.childSessionID]
@@ -200,7 +209,9 @@ export const layer = (options?: Options) =>
           )
           // Early notices wait for recovery's accounting, including Sessions that exhaust their budget.
           const suspended = new Set(
-            [...(yield* store.listSuspended()), ...children].filter((sessionID) => !active.has(sessionID)),
+            [...(yield* store.listSuspended()), ...children].filter(
+              (sessionID) => eligible(sessionID) && !active.has(sessionID),
+            ),
           )
           yield* store.releaseChildClaims(children)
           yield* Effect.forEach(
@@ -219,7 +230,7 @@ export const layer = (options?: Options) =>
           // Background completion can wake a parent, so inspect local ownership only after recovery.
           const resumed = yield* execution.active
           yield* Effect.forEach(
-            (yield* store.listSuspended()).filter((sessionID) => !resumed.has(sessionID)),
+            (yield* store.listSuspended()).filter((sessionID) => eligible(sessionID) && !resumed.has(sessionID)),
             (sessionID) =>
               execution
                 .resume(sessionID)

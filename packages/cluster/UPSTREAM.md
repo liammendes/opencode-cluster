@@ -7,7 +7,7 @@ The fork retains upstream Git history. `packages/cluster` holds the adapter
 implementation; the small upstream hooks are in:
 
 - `packages/core/src/bus.ts`: subscribe to externally committed events.
-- `packages/core/src/session/execution/restart.ts`: configurable recovery policy.
+- `packages/core/src/session/execution/restart.ts`: configurable recovery policy and recovery scoped to a session family.
 - `packages/core/src/environment/environment.ts` and `packages/core/src/shell.ts`: execution-host shell defaults that keep control-plane credentials out of remote commands.
 - `packages/server/src/routes.ts`: expose the execution service to embedders.
 
