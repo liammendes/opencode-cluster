@@ -70,7 +70,7 @@ const envelope = (aggregateID: string, seq: number, version: number) => ({
   version: Event.Version.make(version),
 })
 
-const decodeSerializedEvent = (event: SerializedEvent): Event.Payload => {
+export const decodeSerializedEvent = (event: SerializedEvent): Event.Payload => {
   const definition = Durable.get(event.type)
   if (!definition?.durable) {
     throw new InvalidDurableEventError({ type: event.type, message: `Unknown durable event type ${event.type}` })
@@ -177,6 +177,8 @@ interface Options {
   readonly logReadPageSize?: number
   /** Retain durable event payloads for historical log reads and replay. */
   readonly persist?: boolean
+  /** Committed events from another replica. They notify observers without replaying projections. */
+  readonly external?: (db: Database.Interface["db"]) => Effect.Effect<Stream.Stream<Event.Payload>>
 }
 
 export function configured(options?: Options) {
@@ -202,6 +204,7 @@ export function configured(options?: Options) {
         const logReadPageSize = options?.logReadPageSize ?? 512
         const persist = options?.persist ?? false
         const sessions = new Map<SessionID, Location.Ref>()
+        const observed = options?.external ? new Set<string>() : undefined
         // Keep routing separate from the public event, and retain its snapshot
         // while a slow subscriber drains events queued before a move or deletion.
         const routes = new WeakMap<Event.Payload, readonly Location.Ref[]>()
@@ -493,6 +496,11 @@ export function configured(options?: Options) {
 
         function notify(event: Event.Payload, isolateListeners: boolean) {
           return Effect.gen(function* () {
+            if (observed?.has(event.id)) return
+            if (observed) {
+              observed.add(event.id)
+              if (observed.size > 8192) observed.delete(observed.values().next().value!)
+            }
             yield* Effect.forEach(
               listeners,
               (listener) => (isolateListeners ? observe(event, listener) : listener(event)),
@@ -888,6 +896,24 @@ export function configured(options?: Options) {
             list.push((event) => projector(event as Event.Payload<D>))
             projectors.set(key, list)
           })
+
+        if (options?.external) {
+          const external = yield* options.external(db)
+          yield* external.pipe(
+            Stream.runForEach((event) =>
+              Effect.gen(function* () {
+                const commitRoutes = yield* prepareRoutes([event])
+                commitRoutes()
+                if (event.durable) {
+                  const wakes = pubsub.durable.get(event.durable.aggregateID)
+                  if (wakes) yield* Effect.forEach(wakes, (wake) => PubSub.publish(wake, undefined), { discard: true })
+                }
+                yield* notify(event, true)
+              }),
+            ),
+            Effect.forkScoped,
+          )
+        }
 
         return Service.of({
           publish,

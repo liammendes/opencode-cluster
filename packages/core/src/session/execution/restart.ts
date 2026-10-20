@@ -233,8 +233,11 @@ export const layer = (options?: Options) =>
     }),
   )
 
-export const node = makeGlobalNode({
-  service: Service,
-  layer: layer(),
-  deps: [SessionStore.node, SessionExecution.node, Bus.node, Job.node, Session.node],
-})
+export const configured = (options?: Options) =>
+  makeGlobalNode({
+    service: Service,
+    layer: layer(options),
+    deps: [SessionStore.node, SessionExecution.node, Bus.node, Job.node, Session.node],
+  })
+
+export const node = configured()
