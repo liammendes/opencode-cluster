@@ -201,6 +201,15 @@ histories, and no agent tools. PostgreSQL and executor memory are excluded.
 Other checks were running concurrently. It is a reproducible baseline, not a
 capacity or cost estimate for active agents.
 
+A separate Cloud Run check on 20 October 2026 ran five real Mercury sessions.
+All five returned their expected replies while the controller increased the
+worker count from one to two. A separate shell task wrote and read a file that
+survived worker replacement.
+
+That verifies a small working deployment, not sustained throughput. Initializing
+the imported MCP configuration took minutes in this run. Measure startup and
+response latency with your own configuration before increasing concurrency.
+
 ## Updating from OpenCode
 
 This repository is a Git fork with upstream history. The cluster implementation

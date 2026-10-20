@@ -19,9 +19,9 @@ authoritative session state. Native execution workers each run several agent
 sessions in one process and coordinate ownership through PostgreSQL. You can
 also use the separate Cloudflare Workers profile.
 
-**Status: alpha.** Shared state, recovery and local execution are tested. A fleet
-of thousands of simultaneously active agents has not been demonstrated. Start
-with the [current limits](CLUSTER.md#current-limits).
+**Status: alpha.** Shared state, recovery and native execution are tested, including
+a small Cloud Run deployment. A fleet of thousands of simultaneously active agents
+has not been demonstrated. Start with the [current limits](CLUSTER.md#current-limits).
 
 ## Why this exists
 
