@@ -269,10 +269,10 @@ gcloud run services update opencode-cluster-scaler --project="$PROJECT" \
   --region="$REGION" --scaling=0
 ```
 
-Only one controller can own a namespace. Before replacing its image, wait for the
-old instance to stop; an unclean shutdown leaves a lease that expires after
-60 seconds. Deploy the updated controller with `--scaling=1` after the API and
-workers are ready.
+Only one controller can own a namespace. A replacement answers startup probes
+while waiting for the old controller to release its lease. An unclean shutdown
+can delay the handoff by up to 60 seconds. Deploy the updated controller with
+`--scaling=1` after the API and workers are ready.
 
 To move between PostgreSQL providers, stop API and worker writers first. `src/native/migrate-snapshot.ts` copies one namespace to an empty destination and verifies its checksum. It includes credentials, so run it only through private database connections and secret references. Keep the original database for rollback until the new deployment passes the connection, model and file checks.
 

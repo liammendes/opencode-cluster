@@ -35,6 +35,56 @@ afterAll(async () => {
 })
 const integration = enabled ? test : test.skip
 
+integration("replacement controller answers its startup probe while the old leader still owns the lease", async () => {
+  const id = namespace()
+  namespaces.push(id + ":autoscaler")
+  const fence = (await backend.acquire(id + ":autoscaler", "old-controller", 60_000))!
+  const child = Bun.spawn([process.execPath, "src/native/main.ts"], {
+    env: {
+      PATH: process.env.PATH,
+      CLUSTER_ROLE: "autoscaler",
+      CLUSTER_NAMESPACE: id,
+      CLUSTER_DATABASE_URL: url,
+      EXECUTION_URL: "http://127.0.0.1:9",
+      EXECUTION_TOKEN: "unused-test-token",
+      GOOGLE_CLOUD_PROJECT: "test-project",
+      CLUSTER_REGION: "us-central1",
+      CLUSTER_WORKER_SERVICE: "test-worker",
+      PORT: "0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  const errors = new Response(child.stderr).text()
+  try {
+    const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader()
+    let output = ""
+    let port: number | undefined
+    try {
+      while (!port) {
+        const chunk = await reader.read()
+        if (chunk.done) throw new Error("Controller exited before readiness: " + (await errors))
+        output += chunk.value
+        for (const line of output.split("\n").slice(0, -1)) {
+          const event = JSON.parse(line) as { state?: string; port?: number }
+          if (event.state === "standby") port = event.port
+        }
+      }
+    } finally {
+      reader.releaseLock()
+    }
+    expect((await fetch(`http://127.0.0.1:${port}`)).status).toBe(200)
+    expect(await backend.alive(fence)).toBe(true)
+    expect(await backend.acquire(id + ":autoscaler", "third-controller", 60_000)).toBeUndefined()
+  } finally {
+    child.kill()
+    await child.exited
+    await errors
+    expect(await backend.alive(fence)).toBe(true)
+    await backend.release(fence)
+  }
+})
+
 integration("worker renewal proceeds while the state connection pool is occupied", async () => {
   const state = new PostgresState(url, { max: 1 })
   const id = namespace()

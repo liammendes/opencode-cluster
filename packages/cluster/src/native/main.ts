@@ -50,34 +50,48 @@ if (role === "autoscaler") {
     execution,
     { ...defaultLimits, min, max, capacity: positive("CLUSTER_CONCURRENCY", 4) },
   )
-  const fence = await backend.acquire(namespace + ":autoscaler", crypto.randomUUID(), 60_000)
-  if (!fence) throw new Error("Another capacity controller currently owns this namespace")
+  // A replacement must pass its startup probe before Cloud Run retires the old
+  // revision. Stay ready while waiting for that controller's lease to end.
   const server = Bun.serve({
     hostname: "0.0.0.0",
     port: Number(process.env.PORT ?? "8080"),
     fetch: () => new Response("ok"),
   })
-  let healthy = true
-  let renewing = false
-  const timer = setInterval(async () => {
-    if (renewing || closing) return
-    renewing = true
-    healthy = await backend.renew(fence, 60_000).catch(() => false)
-    renewing = false
-    if (!healthy) void close()
-  }, 10_000)
   dispose = async () => {
-    clearInterval(timer)
     server.stop(true)
-    await backend.release(fence)
   }
-  while (!closing && healthy) {
-    try {
-      console.log(JSON.stringify({ role, ...(await controller.tick()) }))
-    } catch (error) {
-      console.error(JSON.stringify({ role, error: error instanceof Error ? error.message : "Scaling check failed" }))
+  console.log(JSON.stringify({ role, namespace, port: server.port, state: "standby" }))
+  const fence = await (async () => {
+    while (!closing) {
+      const owned = await backend.acquire(namespace + ":autoscaler", crypto.randomUUID(), 60_000)
+      if (owned) return owned
+      await Bun.sleep(1000)
     }
-    if (!closing) await Bun.sleep(15_000)
+  })()
+  if (fence && !closing) {
+    console.log(JSON.stringify({ role, namespace, state: "leader" }))
+    let healthy = true
+    let renewing = false
+    const timer = setInterval(async () => {
+      if (renewing || closing) return
+      renewing = true
+      healthy = await backend.renew(fence, 60_000).catch(() => false)
+      renewing = false
+      if (!healthy) void close()
+    }, 10_000)
+    dispose = async () => {
+      clearInterval(timer)
+      server.stop(true)
+      await backend.release(fence)
+    }
+    while (!closing && healthy) {
+      try {
+        console.log(JSON.stringify({ role, ...(await controller.tick()) }))
+      } catch (error) {
+        console.error(JSON.stringify({ role, error: error instanceof Error ? error.message : "Scaling check failed" }))
+      }
+      if (!closing) await Bun.sleep(15_000)
+    }
   }
 } else {
   const { createReplica } = await import("./server")
@@ -132,6 +146,7 @@ if (role === "autoscaler") {
     try {
       await worker.tick(await sample())
     } catch (error) {
+      if (closing) break
       console.error("Worker stopped after a state or ownership error")
       await close()
       throw error
