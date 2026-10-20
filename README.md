@@ -1,131 +1,115 @@
-> **OpenCode Cluster (alpha):** this fork adds shared state, pooled execution, Cloudflare Workers and native/container deployment profiles. Start with [CLUSTER.md](CLUSTER.md) for setup, measured results, limitations and upstream updates. Based on OpenCode v2.0.32; not yet qualified for thousands of active agents.
-
 <p align="center">
-  <a href="https://opencode.ai">
-    <picture>
-      <source srcset="packages/console/app/src/asset/logo-ornate-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="packages/console/app/src/asset/logo-ornate-light.svg" media="(prefers-color-scheme: light)">
-      <img src="packages/console/app/src/asset/logo-ornate-light.svg" alt="OpenCode logo">
-    </picture>
-  </a>
-</p>
-<p align="center">The open source AI coding agent.</p>
-<p align="center">
-  <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
-  <a href="https://www.npmjs.com/package/@opencode/cli"><img alt="npm" src="https://img.shields.io/npm/v/@opencode/cli?style=flat-square" /></a>
-  <a href="https://github.com/anomalyco/opencode/actions/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/anomalyco/opencode/publish.yml?style=flat-square&branch=dev" /></a>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="packages/cluster/assets/wordmark-dark.svg">
+    <img src="packages/cluster/assets/wordmark-light.svg" width="760" alt="opencode-cluster">
+  </picture>
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.zht.md">繁體中文</a> |
-  <a href="README.ko.md">한국어</a> |
-  <a href="README.de.md">Deutsch</a> |
-  <a href="README.es.md">Español</a> |
-  <a href="README.fr.md">Français</a> |
-  <a href="README.it.md">Italiano</a> |
-  <a href="README.da.md">Dansk</a> |
-  <a href="README.ja.md">日本語</a> |
-  <a href="README.pl.md">Polski</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.bs.md">Bosanski</a> |
-  <a href="README.ar.md">العربية</a> |
-  <a href="README.no.md">Norsk</a> |
-  <a href="README.br.md">Português (Brasil)</a> |
-  <a href="README.th.md">ไทย</a> |
-  <a href="README.tr.md">Türkçe</a> |
-  <a href="README.uk.md">Українська</a> |
-  <a href="README.bn.md">বাংলা</a> |
-  <a href="README.gr.md">Ελληνικά</a> |
-  <a href="README.vi.md">Tiếng Việt</a>
+  Shared state. Pooled agents. Your infrastructure.
 </p>
 
-[![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
+<p align="center">
+  <a href="CLUSTER.md">Get started</a> ·
+  <a href="CLUSTER.md#deployment-profiles">Deployment profiles</a> ·
+  <a href="CLUSTER.md#tests-and-measurements">Tests and measurements</a> ·
+  <a href="packages/cluster/UPSTREAM.md">Upstream updates</a>
+</p>
 
----
+**opencode-cluster** is an experimental, vendor-neutral fork of
+[OpenCode](https://github.com/anomalyco/opencode). Multiple API replicas share
+authoritative session state, while a pooled execution worker runs several agents
+in one process. Deploy on your own infrastructure or use the Cloudflare Workers
+adapter.
 
-### Installation
+**Status: alpha.** Shared state, recovery and local execution are tested. A fleet
+of thousands of simultaneously active agents has not been demonstrated. Start
+with the [current limits](CLUSTER.md#current-limits).
 
-```bash
-# YOLO
-curl -fsSL https://opencode.ai/install | bash
+## Why this exists
 
-# Package managers
-npm i -g @opencode/cli@latest      # or bun/pnpm/yarn
-scoop install opencode             # Windows
-choco install opencode             # Windows
-brew install anomalyco/tap/opencode # macOS and Linux (recommended, always up to date)
-brew install opencode              # macOS and Linux (official brew formula, updated less)
-sudo pacman -S opencode            # Arch Linux (Stable)
-paru -S opencode-bin               # Arch Linux (Latest from AUR)
-mise use -g opencode               # Any OS
-nix run nixpkgs#opencode           # or github:anomalyco/opencode for latest dev branch
+One OpenCode process per agent becomes expensive as a workload grows. This fork
+separates the HTTP API, durable state and tool execution so sessions can share an
+OpenCode runtime. Any native API replica can read the same committed session
+state; clients do not need to remember which replica created it.
+
+## What is included
+
+- **Shared session state:** PostgreSQL for native deployments, or Durable Object
+  SQLite on Cloudflare.
+- **Pooled execution:** durable prompt admission, renewable worker leases and
+  protection against state writes from an expired worker.
+- **Portable tools:** a separate Linux executor with streaming process input and
+  output, remote files and shell/Git support.
+- **State portability:** checksummed database archives between native SQLite and
+  Durable Objects, with stored credential values excluded.
+- **Upstream maintenance:** a normal Git fork with small core hooks and the
+  cluster implementation isolated in `packages/cluster`.
+
+## Choose a deployment
+
+| Environment                | Start here                                                       | Verification                                                                                                    |
+| -------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Local Docker / self-hosted | [Native setup](CLUSTER.md#try-the-native-deployment)             | Separate API containers, PostgreSQL and a Linux executor tested locally                                         |
+| Google Cloud Run           | [GCP guide](packages/cluster/deploy/gcp/README.md)               | API manifest supplied; no live GCP deployment                                                                   |
+| Cloudflare Workers         | [Cloudflare guide](packages/cluster/deploy/cloudflare/README.md) | Local workerd API, restart, archive round trip and synthetic agent turn tested; managed containers not deployed |
+
+Cloudflare is optional. The native deployment does not depend on a Cloudflare
+service, and the Cloudflare deployment does not require a Google service.
+
+## Get started
+
+Clone this fork, then follow the [native setup](CLUSTER.md#try-the-native-deployment)
+to start PostgreSQL, two API replicas and a pooled execution worker:
+
+```sh
+git clone --branch cluster-v2.0.32 https://github.com/liammendes/opencode-cluster.git
+cd opencode-cluster
 ```
 
-> [!TIP]
-> Remove versions older than 0.1.x before installing.
+The setup guide covers credentials, model configuration and persistent workspace
+volumes. Cloud Run and Cloudflare have their own deployment guides above.
+Paseo and real Mercury workloads still need integration testing; Paseo must use
+the shared server to avoid spawning a local OpenCode process for every agent.
 
-### Desktop App (BETA)
+## What the 1,000-session result means
 
-OpenCode is also available as a desktop application. Download directly from the [releases page](https://github.com/anomalyco/opencode/releases) or [opencode.ai/download](https://opencode.ai/download).
+A local baseline created **1,000 tiny stored sessions**, replaced an API runtime,
+then read every session back. It used two API runtimes inside one Bun process and
+PostgreSQL 17 in OrbStack on a Mac. It made **zero model calls and ran zero tools**.
 
-| Platform              | Download                           |
-| --------------------- | ---------------------------------- |
-| macOS (Apple Silicon) | `opencode-desktop-mac-arm64.dmg`   |
-| macOS (Intel)         | `opencode-desktop-mac-x64.dmg`     |
-| Windows               | `opencode-desktop-windows-x64.exe` |
-| Linux                 | `.deb`, `.rpm`, or `.AppImage`     |
+The run took about 105 seconds to create the sessions and 133 seconds overall.
+Bun process RSS rose from 267 to 328 MiB; those figures exclude PostgreSQL and
+executor memory. This measures stored-session behavior, not 1,000 busy agents.
+See the [measurement details and test commands](CLUSTER.md#tests-and-measurements).
 
-```bash
-# macOS (Homebrew)
-brew install --cask opencode-desktop
-# Windows (Scoop)
-scoop bucket add extras; scoop install extras/opencode-desktop
+## Development and upstream updates
+
+This branch starts from **OpenCode v2.0.32**. Use the
+[upstream update guide](packages/cluster/UPSTREAM.md) to replay the cluster commits
+on a newer upstream revision.
+
+With Bun 1.4.2 installed:
+
+```sh
+bun install --frozen-lockfile
+bun run check
+cd packages/cluster
+bun run test
 ```
 
-#### Installation Directory
+Integration checks need additional local services. A
+[GitHub Actions template](packages/cluster/ci/README.md) is included but inactive.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the inherited development conventions.
 
-The install script respects the following priority order for the installation path:
+## Credits
 
-1. `$OPENCODE_INSTALL_DIR` - Custom installation directory
-2. `$XDG_BIN_DIR` - XDG Base Directory Specification compliant path
-3. `$HOME/bin` - Standard user binary directory (if it exists or can be created)
-4. `$HOME/.opencode/bin` - Default fallback
+opencode-cluster is an independent project. It is not built by or affiliated with
+the OpenCode team. OpenCode is developed by
+[Anomaly](https://github.com/anomalyco/opencode); the upstream
+[documentation](https://opencode.ai/docs) and
+[README](https://github.com/anomalyco/opencode/blob/v2.0.32/README.md) cover the
+original project.
 
-```bash
-# Examples
-OPENCODE_INSTALL_DIR=/usr/local/bin curl -fsSL https://opencode.ai/install | bash
-XDG_BIN_DIR=$HOME/.local/bin curl -fsSL https://opencode.ai/install | bash
-```
-
-### Agents
-
-OpenCode includes two built-in agents you can switch between with the `Tab` key.
-
-- **build** - Default, full-access agent for development work
-- **plan** - Read-only agent for analysis and code exploration
-  - Denies file edits by default
-  - Asks permission before running bash commands
-  - Ideal for exploring unfamiliar codebases or planning changes
-
-Also included is a **general** subagent for complex searches and multistep tasks.
-This is used internally and can be invoked using `@general` in messages.
-
-Learn more about [agents](https://opencode.ai/docs/agents).
-
-### Documentation
-
-For more info on how to configure OpenCode, [**head over to our docs**](https://opencode.ai/docs).
-
-### Contributing
-
-If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
-
-### Building on OpenCode
-
-If you are working on a project that's related to OpenCode and is using "opencode" as part of its name, for example "opencode-dashboard" or "opencode-mobile", please add a note to your README to clarify that it is not built by the OpenCode team and is not affiliated with us in any way.
-
----
-
-**Join our community** [Discord](https://discord.gg/opencode) | [X.com](https://x.com/opencode)
+Code retains the [MIT license](LICENSE). The bubbly wordmark uses
+[DynaPuff](packages/cluster/assets/README.md), with its font license included.

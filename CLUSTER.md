@@ -1,4 +1,4 @@
-# OpenCode Cluster — alpha
+# opencode-cluster — alpha
 
 A vendor-neutral cluster extension to OpenCode **v2.0.32**. Sessions share an
 OpenCode runtime instead of requiring one OpenCode process per agent.
