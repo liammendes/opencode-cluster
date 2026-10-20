@@ -11,6 +11,8 @@ import { Workspace } from "../workspace.js"
 export interface Interface {
   readonly files: Files
   readonly spawner: ChildProcessSpawner["Service"]
+  /** Shell defaults for an external execution host; omit for the local process environment. */
+  readonly shellEnvironment?: Readonly<Record<string, string | undefined>>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Environment") {}

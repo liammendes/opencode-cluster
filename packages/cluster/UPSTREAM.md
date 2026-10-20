@@ -8,6 +8,7 @@ implementation; the small upstream hooks are in:
 
 - `packages/core/src/bus.ts`: subscribe to externally committed events.
 - `packages/core/src/session/execution/restart.ts`: configurable recovery policy.
+- `packages/core/src/environment/environment.ts` and `packages/core/src/shell.ts`: execution-host shell defaults that keep control-plane credentials out of remote commands.
 - `packages/server/src/routes.ts`: expose the execution service to embedders.
 
 Keep hooks and adapters in separate commits. On a clean checkout, create a new
