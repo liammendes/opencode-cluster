@@ -1,0 +1,31 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "opencode-cluster",
+  "main": "../../src/cloudflare/worker.ts",
+  "compatibility_date": "2026-10-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "rules": [{ "type": "Text", "globs": ["**/*.txt"], "fallthrough": true }],
+  "durable_objects": {
+    "bindings": [
+      { "name": "NAMESPACES", "class_name": "OpenCodeNamespace" },
+      { "name": "SANDBOXES", "class_name": "ExecutionSandbox" },
+    ],
+  },
+  "migrations": [{ "tag": "cluster-v1", "new_sqlite_classes": ["OpenCodeNamespace", "ExecutionSandbox"] }],
+  "r2_buckets": [{ "binding": "ARTIFACTS", "bucket_name": "opencode-cluster-artifacts", "jurisdiction": "us" }],
+  "containers": [
+    {
+      "class_name": "ExecutionSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "base": { "dockerfile": "../executor.Dockerfile", "build_context": "../../../.." },
+      },
+      "max_instances": 4,
+    },
+  ],
+  "vars": {
+    "CLUSTER_NAMESPACE": "default",
+    "RESIDENCY": "us",
+    "EXECUTION_RESIDENCY": "unverified",
+  },
+}

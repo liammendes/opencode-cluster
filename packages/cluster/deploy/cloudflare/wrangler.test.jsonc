@@ -1,0 +1,14 @@
+{
+  "name": "opencode-cluster-local-test",
+  "main": "../../src/cloudflare/worker.ts",
+  "compatibility_date": "2026-07-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "NAMESPACES", "class_name": "OpenCodeNamespace" },
+      { "name": "SANDBOXES", "class_name": "ExecutionSandbox" },
+    ],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OpenCodeNamespace", "ExecutionSandbox"] }],
+  "rules": [{ "type": "Text", "globs": ["**/*.txt"], "fallthrough": true }],
+}

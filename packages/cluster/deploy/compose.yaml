@@ -1,0 +1,54 @@
+name: opencode-cluster
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: opencode
+      POSTGRES_USER: opencode
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes: [state:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opencode"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    restart: unless-stopped
+  executor:
+    build:
+      context: ../../..
+      dockerfile: packages/cluster/deploy/executor.Dockerfile
+    environment:
+      EXECUTION_TOKEN: ${EXECUTION_TOKEN:?Set EXECUTION_TOKEN}
+    volumes: [workspace:/workspace]
+    restart: unless-stopped
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  api:
+    build:
+      context: ../../..
+      dockerfile: packages/cluster/deploy/Dockerfile
+    environment: &common
+      CLUSTER_DATABASE_URL: postgres://opencode:${POSTGRES_PASSWORD}@postgres:5432/opencode
+      CLUSTER_PASSWORD: ${CLUSTER_PASSWORD:?Set CLUSTER_PASSWORD}
+      EXECUTION_URL: http://executor:8081
+      EXECUTION_TOKEN: ${EXECUTION_TOKEN}
+      OPENCODE_CONFIG_CONTENT: ${OPENCODE_CONFIG_CONTENT:-{}}
+      CLUSTER_ROLE: api
+    ports: ["127.0.0.1::8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
+  worker:
+    build:
+      context: ../../..
+      dockerfile: packages/cluster/deploy/Dockerfile
+    environment:
+      <<: *common
+      CLUSTER_ROLE: worker
+      CLUSTER_CONCURRENCY: "8"
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: unless-stopped
+volumes:
+  state:
+  workspace:

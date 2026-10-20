@@ -1,0 +1,35 @@
+# Replace PROJECT, IMAGE, SERVICE_ACCOUNT and secret names before deployment.
+# API replicas share PostgreSQL; they do not own agent execution.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: opencode-cluster-api
+  labels:
+    cloud.googleapis.com/location: us-east4
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: "10"
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      serviceAccountName: SERVICE_ACCOUNT
+      containerConcurrency: 80
+      timeoutSeconds: 3600
+      containers:
+        - image: IMAGE
+          ports: [{ containerPort: 8080 }]
+          resources:
+            limits: { cpu: "1", memory: 2Gi }
+          env:
+            - { name: CLUSTER_ROLE, value: api }
+            - name: CLUSTER_DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: opencode-database-url, key: latest }
+            - name: CLUSTER_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: opencode-password, key: latest }
+            - name: EXECUTION_TOKEN
+              valueFrom:
+                secretKeyRef: { name: opencode-execution-token, key: latest }
+            - { name: EXECUTION_URL, value: "https://EXECUTION_SERVICE" }

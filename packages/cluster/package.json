@@ -1,0 +1,31 @@
+{
+  "name": "@opencode/cluster",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "start": "bun src/native/main.ts",
+    "test": "bun run script/test.ts --timeout 30000",
+    "typecheck": "tsgo --noEmit",
+    "test:postgres": "CLUSTER_TEST_POSTGRES=1 bun run script/test.ts test/postgres.test.ts --timeout 30000",
+    "build:worker": "wrangler deploy --dry-run --config deploy/cloudflare/wrangler.test.jsonc --outdir ../../dist/cloudflare",
+    "test:workerd": "bun run build:worker && CLUSTER_TEST_WORKER=1 bun run script/test.ts test/workerd.test.ts --timeout 30000"
+  },
+  "dependencies": {
+    "@opencode/core": "workspace:*",
+    "@opencode/server": "workspace:*",
+    "@opencode/schema": "workspace:*",
+    "@opencode/util": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@opencode/ai": "workspace:*",
+    "@opencode/client": "workspace:*",
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "miniflare": "4.20260730.0",
+    "wrangler": "4.151.1"
+  }
+}
