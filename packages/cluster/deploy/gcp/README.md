@@ -261,6 +261,19 @@ Test with a small batch of real agents before increasing the limit. A successful
 
 Stop admitting new work and let agents settle before rolling out a worker or executor change. A stopped worker's remaining sessions are reported as interrupted; check uncertain tool outcomes before resuming them. Database fencing cannot undo a command already sent to an executor.
 
+If the capacity controller is enabled, stop it before maintenance so it cannot
+resize the worker while you deploy:
+
+```sh
+gcloud run services update opencode-cluster-scaler --project="$PROJECT" \
+  --region="$REGION" --scaling=0
+```
+
+Only one controller can own a namespace. Before replacing its image, wait for the
+old instance to stop; an unclean shutdown leaves a lease that expires after
+60 seconds. Deploy the updated controller with `--scaling=1` after the API and
+workers are ready.
+
 To move between PostgreSQL providers, stop API and worker writers first. `src/native/migrate-snapshot.ts` copies one namespace to an empty destination and verifies its checksum. It includes credentials, so run it only through private database connections and secret references. Keep the original database for rollback until the new deployment passes the connection, model and file checks.
 
 Back up workspace volumes separately from PostgreSQL. Keep the [public project page](../domain/README.md) separate from your authenticated API.
