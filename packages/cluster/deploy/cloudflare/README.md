@@ -12,10 +12,10 @@ You need:
 
 - A checkout of this fork, Bun 1.4.2 and the repository dependencies.
 - A paid Workers account with SQLite Durable Objects.
-- Access to the current Cloudflare Containers API for the supplied configuration.
+- Docker and access to Cloudflare Containers if you choose the managed executor below.
 - A model provider account and API key.
 
-The configuration is pinned to Wrangler 4.151.1 and uses its `images` and `scheduling_policy` container fields. Do not replace the pinned CLI with an older global Wrangler.
+The package pins Wrangler 4.151.1. Its container configuration uses the `images` and `scheduling_policy` fields. Use the commands below so you run the pinned CLI.
 
 From the repository root:
 
@@ -23,6 +23,7 @@ From the repository root:
 bun install --frozen-lockfile
 cd packages/cluster
 bun run test:workerd
+bunx wrangler login
 ```
 
 A local test pass does not establish your account's container availability or data residency.
@@ -49,7 +50,15 @@ The supplied configuration requires U.S. residency and leaves `EXECUTION_RESIDEN
 
 A Durable Object or R2 jurisdiction does not prove where a container executes. Choose an external executor with a verified location if the managed container cannot meet your requirement.
 
-Create the R2 bucket named in the configuration. The binding is available to the object-storage adapter; automatic backups are not implemented.
+Create the R2 bucket named in the configuration:
+
+```sh
+bunx wrangler r2 bucket create YOUR_BUCKET_NAME --jurisdiction us
+```
+
+Use the same name and jurisdiction in `r2_buckets`. If you selected unrestricted placement, choose the bucket's policy explicitly and keep its binding consistent. Cloudflare's [R2 data location guide](https://developers.cloudflare.com/r2/reference/data-location/) explains the distinction between a location hint and a jurisdiction guarantee.
+
+The binding is available to the object-storage adapter; automatic backups are not implemented.
 
 ## 3. Add secrets and model configuration
 

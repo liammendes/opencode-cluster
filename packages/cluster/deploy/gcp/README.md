@@ -21,6 +21,8 @@ PostgreSQL may be Cloud SQL, PlanetScale Postgres, or another compatible service
 You need:
 
 - A Google Cloud project with billing, `gcloud`, and permission to create Cloud Run, Artifact Registry and Secret Manager resources.
+- Permission to create service accounts and assign the roles used below.
+- A checkout of this fork. Use the clone command in the [native guide](../README.md#1-clone-the-fork).
 - PostgreSQL reachable from Cloud Run. Use a database and role dedicated to this installation.
 - A private executor endpoint and a persistent workspace volume. Cloud Run's writable container filesystem is not a workspace backup.
 - A domain you control, plus a load balancer and certificate budget.
@@ -43,7 +45,19 @@ export EXECUTION_URL=http://PRIVATE_EXECUTOR_IP:8081
 
 ## 1. Prepare the database, executor and secrets
 
-The runtime needs permission to create its two PostgreSQL tables. Start with four database connections per process. Include all API, worker and controller instances when checking database connection limits.
+Enable the Google APIs and create a dedicated runtime identity:
+
+```sh
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
+  cloudbuild.googleapis.com secretmanager.googleapis.com compute.googleapis.com \
+  --project="$PROJECT"
+gcloud iam service-accounts create opencode-cluster --project="$PROJECT" \
+  --display-name="OpenCode cluster runtime"
+```
+
+Keep an existing account if you have already created it.
+
+The runtime needs permission to create its two PostgreSQL tables. Start with four state connections per process. Workers and the controller use one additional connection for lease renewals, so busy state queries cannot block their heartbeat. Include every replica when checking database connection limits.
 
 For **PlanetScale Postgres**, create a logical database and a dedicated role inside your existing cluster. Grant that role `CONNECT` to the database and `USAGE, CREATE` on its application schema. Use a connection URL ending in the database name with `sslmode=verify-full`; the pooled endpoint uses port `6432`. Do not reuse a role with broad access to other applications.
 
@@ -76,15 +90,24 @@ gcloud secrets create opencode-password --project="$PROJECT" \
   --data-file=/private/path/cluster-password
 ```
 
-Repeat for the other secrets. Grant `roles/secretmanager.secretAccessor` to `RUNTIME_SA` on these named secrets. Record the secret version numbers you will deploy; pin versions so a restart cannot silently change configuration.
+Repeat for the other secrets, using a separate private file for each. The [native model configuration example](../README.md#2-create-local-secrets) shows the JSON format for `opencode-config`.
+
+Grant access to these four secrets:
+
+```sh
+for secret in opencode-database-url opencode-password opencode-execution-token opencode-config; do
+  gcloud secrets add-iam-policy-binding "$secret" --project="$PROJECT" \
+    --member="serviceAccount:$RUNTIME_SA" --role=roles/secretmanager.secretAccessor
+done
+```
+
+Record the secret version numbers you will deploy; pin versions so a restart cannot silently change configuration.
 
 ## 2. Build the images
 
-Enable the required APIs and create an Artifact Registry Docker repository if you do not already have one:
+Create an Artifact Registry Docker repository if you do not already have one, then build:
 
 ```sh
-gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
-  cloudbuild.googleapis.com secretmanager.googleapis.com --project="$PROJECT"
 gcloud artifacts repositories create "$REPOSITORY" --project="$PROJECT" \
   --location="$REGION" --repository-format=docker
 gcloud builds submit --project="$PROJECT" --region="$REGION" \
@@ -160,30 +183,52 @@ Ask the agent to write and read a small test file. Verify that it survives a wor
 
 ## Optional: scale from one to four workers
 
-Cloud Run's built-in autoscaling uses CPU and HTTP request concurrency; it does not use RAM or disk utilization. Agent workers consume database work, so this profile uses **manual Cloud Run instance counts controlled by a separate process**.
+Cloud Run's built-in autoscaling uses CPU and HTTP request concurrency; it does not use RAM or disk utilization. Agent workers consume database work, so this profile uses [manual Cloud Run instance counts](https://docs.cloud.google.com/run/docs/configuring/services/manual-scaling) controlled by a separate process.
 
-The controller runs with `CLUSTER_ROLE=autoscaler`. Configure:
+Create a separate controller identity and two small roles:
 
-```text
-GOOGLE_CLOUD_PROJECT=your-project
-CLUSTER_REGION=your-region
-CLUSTER_WORKER_SERVICE=opencode-cluster-worker
-CLUSTER_NAMESPACE=default
-CLUSTER_CONCURRENCY=4
-CLUSTER_MIN_WORKERS=1
-CLUSTER_MAX_WORKERS=4
-CLUSTER_DATABASE_CONNECTIONS=4
-EXECUTION_URL=http://PRIVATE_EXECUTOR_IP:8081
+```sh
+export SCALER_SA=opencode-cluster-scaler@"$PROJECT".iam.gserviceaccount.com
+gcloud iam service-accounts create opencode-cluster-scaler --project="$PROJECT" \
+  --display-name="OpenCode cluster capacity controller"
+gcloud iam roles create opencodeClusterScaler --project="$PROJECT" \
+  --title="Resize OpenCode workers" --permissions=run.services.get,run.services.update --stage=GA
+gcloud iam roles create opencodeClusterOperations --project="$PROJECT" \
+  --title="Read Cloud Run resize status" --permissions=run.operations.get --stage=GA
 ```
 
-Use the same runtime image, one warm instance, CPU always allocated, and the same VPC access. Supply only the database URL and executor token secrets. Give its separate service account:
+Grant service updates only on the worker. Operation status is a project-level permission:
 
-- `run.services.get` and `run.services.update` on the **worker service**.
-- Service Account User on the worker's runtime account.
-- `run.operations.get` at project level, so it can wait for a resize to finish. A custom role containing only this permission avoids granting project-wide service administration.
+```sh
+gcloud run services add-iam-policy-binding opencode-cluster-worker \
+  --project="$PROJECT" --region="$REGION" \
+  --member="serviceAccount:$SCALER_SA" --role="projects/$PROJECT/roles/opencodeClusterScaler"
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member="serviceAccount:$SCALER_SA" --role="projects/$PROJECT/roles/opencodeClusterOperations"
+gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" --project="$PROJECT" \
+  --member="serviceAccount:$SCALER_SA" --role=roles/iam.serviceAccountUser
+for secret in opencode-database-url opencode-execution-token; do
+  gcloud secrets add-iam-policy-binding "$secret" --project="$PROJECT" \
+    --member="serviceAccount:$SCALER_SA" --role=roles/secretmanager.secretAccessor
+done
+```
+
+Deploy the controller with the same image and VPC access. Replace the secret versions as you did for the worker:
+
+```sh
+gcloud run deploy opencode-cluster-scaler --project="$PROJECT" --region="$REGION" \
+  --image="$IMAGE" --service-account="$SCALER_SA" \
+  --cpu=1 --memory=512Mi --scaling=1 --no-cpu-throttling \
+  --network="$NETWORK" --subnet="$SUBNET" --network-tags=opencode-cluster-run \
+  --vpc-egress=private-ranges-only --ingress=internal --no-default-url \
+  --no-allow-unauthenticated \
+  --set-env-vars="CLUSTER_ROLE=autoscaler,GOOGLE_CLOUD_PROJECT=$PROJECT,CLUSTER_REGION=$REGION,CLUSTER_WORKER_SERVICE=opencode-cluster-worker,CLUSTER_NAMESPACE=default,CLUSTER_CONCURRENCY=4,CLUSTER_MIN_WORKERS=1,CLUSTER_MAX_WORKERS=4,CLUSTER_DATABASE_CONNECTIONS=4,EXECUTION_URL=$EXECUTION_URL" \
+  --set-secrets="CLUSTER_DATABASE_URL=opencode-database-url:1,EXECUTION_TOKEN=opencode-execution-token:1"
+```
 
 It does not need the cluster password or model credentials. If a resize starts
 but the controller logs `403` while waiting, check the operation-read permission.
+Cloud SQL users also need the connector, socket setting and Cloud SQL Client role on this service.
 
 Set the controller service to `--scaling=1 --no-cpu-throttling`. Manual scaling
 keeps the requested number running; Cloud Run rejects service-level `--min` and
@@ -200,6 +245,17 @@ The default policy:
 Existing sessions stay with their worker; adding workers helps new work. A single large session may still need more memory. The controller does not expand executor storage, increase provider quotas, or remove the serialized database bottleneck.
 
 Four workers provide **16 top-level session-family slots**. Nested subagents share their parent's worker and can increase the number of active sessions beyond 16.
+
+Check the actual instance setting and controller decisions:
+
+```sh
+gcloud run services describe opencode-cluster-worker --project="$PROJECT" --region="$REGION"
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="opencode-cluster-scaler"' \
+  --project="$PROJECT" --freshness=10m --limit=20
+```
+
+Test with a small batch of real agents before increasing the limit. A successful resize is only one check: confirm that the original agents finish, queued agents start, and idle capacity returns to the configured minimum.
 
 ## Updates, migration and recovery
 
